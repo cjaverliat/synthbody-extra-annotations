@@ -1,0 +1,7 @@
+embreex
+trimesh
+tqdm
+transformations
+opencv-python
+matplotlib
+numpy
