@@ -9,6 +9,9 @@ from tqdm import tqdm
 import itertools
 import matplotlib.pyplot as plt
 
+import smplx
+import torch
+
 PREVIEW = True
 SYNTH_BODY_DIR = "/mnt/thalassa/Charles_JAVERLIAT/Datasets/SynthMoCap/synth_body/"
 OUTPUT_DIR = "/mnt/thalassa/Charles_JAVERLIAT/Datasets/SynthMoCap/synth_body_extras/"
