@@ -1,7 +1,9 @@
 embreex
 trimesh
 tqdm
-transformations
 opencv-python
 matplotlib
 numpy
+urllib3
+scipy
+pyglet<2

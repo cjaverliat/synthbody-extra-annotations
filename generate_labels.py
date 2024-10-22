@@ -1,5 +1,4 @@
 import os.path as osp
-import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 from smpl_numpy import SMPL
@@ -8,10 +7,11 @@ from pathlib import Path
 import json
 from tqdm import tqdm
 import itertools
-from transformations import rotation_matrix
+import matplotlib.pyplot as plt
 
-PREVIEW = False
-SYNTH_BODY_DIR = "F:/Documents/These/Datasets/SynthMoCap/data/synth_body"
+PREVIEW = True
+SYNTH_BODY_DIR = "/mnt/thalassa/Charles_JAVERLIAT/Datasets/SynthMoCap/synth_body/"
+OUTPUT_DIR = "/mnt/thalassa/Charles_JAVERLIAT/Datasets/SynthMoCap/synth_body_extras/"
 N_IDENTITIES = 20000
 N_FRAMES_PER_IDENTITY = 5
 MASKS_NAME = [
@@ -23,7 +23,9 @@ MASKS_NAME = [
     "hair",
     "headwear",
 ]
-SMPLH_MODEL = SMPL("smplh/neutral/model.npz")
+SMPLH_MODEL = SMPL(
+    "/mnt/thalassa/Charles_JAVERLIAT/Datasets/SMPL/smplh/neutral/model.npz"
+)
 
 BODY_CONNECTIVITY = [
     [1, 0],
@@ -119,6 +121,8 @@ def draw_skeleton(
             )
 
 
+Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+
 for identity, frame in tqdm(
     itertools.product(range(N_IDENTITIES), range(N_FRAMES_PER_IDENTITY)),
     total=N_IDENTITIES * N_FRAMES_PER_IDENTITY,
@@ -135,25 +139,37 @@ for identity, frame in tqdm(
     translation = np.asarray(metadata["translation"])
     world_to_camera = np.asarray(metadata["camera"]["world_to_camera"])
     camera_to_image = np.asarray(metadata["camera"]["camera_to_image"])
+    resolution = np.asarray(metadata["camera"]["resolution"])
 
     mask = combine_masks(identity, frame)
-    x, y, w, h = compute_bbox_from_mask(mask)
+    bbox = compute_bbox_from_mask(mask)  # Bbox in format xywh
 
     SMPLH_MODEL.beta = body_identity[: SMPLH_MODEL.shape_dim]
     SMPLH_MODEL.theta = pose
     SMPLH_MODEL.translation = translation
 
     smpl_mesh = trimesh.Trimesh(
-        vertices=SMPLH_MODEL.vertices, faces=SMPLH_MODEL.triangles, face_normals=SMPLH_MODEL.normals, process=False, use_embree=True
+        vertices=SMPLH_MODEL.vertices,
+        faces=SMPLH_MODEL.triangles,
+        face_normals=SMPLH_MODEL.normals,
+        process=False,
+        use_embree=True,
     )
 
-    # Ignore hand joints
-    joints_3d = SMPLH_MODEL.joint_positions[:22]
+    joints_3d = SMPLH_MODEL.joint_positions
+
+    # pi rotation around x axis
+    R = np.array(
+        [
+            [1, 0, 0, 0],
+            [0, -1, 0, 0],
+            [0, 0, -1, 0],
+            [0, 0, 0, 1],
+        ]
+    )
 
     # Determine visibility of joints
-    world_to_cam_gl = np.linalg.inv(world_to_camera).dot(
-        rotation_matrix(np.pi, [1, 0, 0])
-    )
+    world_to_cam_gl = np.linalg.inv(world_to_camera).dot(R)
     camera_position = world_to_cam_gl[:3, 3]
 
     ray_directions = joints_3d - camera_position
@@ -161,21 +177,21 @@ for identity, frame in tqdm(
         ray_directions, axis=1, keepdims=True
     )
     ray_origins = np.tile(camera_position, (len(joints_3d), 1))
-    raycast_points, index_ray, _ = smpl_mesh.ray.intersects_location(
+    ray_intersections, index_ray, _ = smpl_mesh.ray.intersects_location(
         ray_origins=ray_origins, ray_directions=ray_directions, multiple_hits=False
     )
-    # Reorder raycast intersection points to match the original rays order
-    raycast_points = raycast_points[np.argsort(index_ray)]
-    
+
+    raycast_points = np.zeros_like(joints_3d)
+    raycast_points[index_ray] = ray_intersections
+
     joints_vis = np.zeros(len(joints_3d))
 
-    dist_threshold = 0.3 # 30 cm
+    dist_threshold = 0.3  # 30 cm
 
     dists = np.linalg.norm(joints_3d - raycast_points, axis=1)
     joints_vis = dists <= dist_threshold
 
     if PREVIEW:
-        img = cv2.imread(format_img_path(identity, frame), cv2.IMREAD_COLOR)
 
         # Project joints in image plane and get depth
         joints_homogeneous = np.concatenate(
@@ -203,10 +219,6 @@ for identity, frame in tqdm(
         smpl_mesh.visual.face_colors = [200, 200, 250, 100]
         # smpl_mesh.visual.face_colors = [200, 200, 250, 255]
 
-
-        draw_skeleton(img, joints_2d, joints_vis, 1)
-        cv2.imshow(f"Identity {identity}, Frame {frame}", img)
-
         # Create 3D visualization
         rays_path = trimesh.load_path(
             np.hstack((ray_origins, joints_3d)).reshape(-1, 2, 3)
@@ -217,7 +229,9 @@ for identity, frame in tqdm(
         raycast_points_pcl.visual.vertex_colors = [0, 0, 255, 255]
 
         joints_points_pcl = trimesh.points.PointCloud(joints_3d)
-        joints_points_pcl.visual.vertex_colors = [[0, 255, 0, 255] if v else [255, 0, 0, 255] for v in joints_vis]
+        joints_points_pcl.visual.vertex_colors = [
+            [0, 255, 0, 255] if v else [255, 0, 0, 255] for v in joints_vis
+        ]
 
         scene = trimesh.Scene(
             [
@@ -228,6 +242,29 @@ for identity, frame in tqdm(
             ]
         )
         scene.camera_transform = world_to_cam_gl
-        # Set the window size to be small
-        scene.show(resolution=(img.shape[1], img.shape[0]))
-        cv2.destroyAllWindows()
+
+        img = cv2.imread(format_img_path(identity, frame))
+        plt.title(f"Identity {identity}, frame {frame}")
+        plt.axis("off")
+        plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        plt.show()
+
+        scene.show(resolution=resolution, line_settings={"point_size": 5})
+
+        plt.subplot(1, 3, 1)
+        plt.title(f"Identity {identity}, frame {frame}")
+        plt.axis("off")
+        plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+
+        plt.subplot(1, 3, 2)
+        draw_skeleton(img, joints_2d, joints_vis, 1)
+        plt.title(f"Identity {identity}, frame {frame}")
+        plt.axis("off")
+        plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+
+        plt.subplot(1, 3, 3)
+        plt.title(f"Mask Identity {identity}, frame {frame}")
+        plt.axis("off")
+        plt.imshow(mask, cmap="gray")
+
+        plt.show()
