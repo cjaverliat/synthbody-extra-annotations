@@ -15,7 +15,7 @@ except ImportError:
     print("Failed to import embree. Make sure to install embreex.")
 
 VISIBILITY_THRESHOLD = 0.3  # 30 cm
-PREVIEW = True
+PREVIEW = False
 SYNTH_BODY_DIR = "F:/Documents/These/Datasets/SynthMoCap/data/synth_body"
 OUTPUT_DIR = "F:/Documents/These/Datasets/SynthMoCap/data/synth_body_extras/"
 N_IDENTITIES = 20000
@@ -445,7 +445,7 @@ def process_identity_frame(smplh_model: SMPL, identity, frame):
         },
     }
     with open(format_output_extra_metadata_path(identity, frame), "w") as f:
-        json.dump(extra_metadata, f)
+        json.dump(extra_metadata, f, indent=4)
 
 
 for identity, frame in tqdm(
