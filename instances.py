@@ -1,10 +1,9 @@
-import os.path as osp
-from tqdm import tqdm
 import json
-import argparse
+from tqdm import tqdm
+import os.path as osp
 
 
-def generate_instances_file(dataset_dir, output_file, n_instances=20000, n_frames=5):
+def generate_instances_list(dataset_dir, n_instances=20000, n_frames=5):
     instances = []
     pbar = tqdm(total=n_instances * n_frames)
 
@@ -23,8 +22,8 @@ def generate_instances_file(dataset_dir, output_file, n_instances=20000, n_frame
 
             instances.append(
                 {
-                    "instance_id": i,
-                    "frame_id": j,
+                    "identity": i,
+                    "frame": j,
                     "image": f"img_{formatted_suffix}.jpg",
                     "metadata": f"metadata_{formatted_suffix}.json",
                     "extra_metadata": f"extras/extra_metadata_{formatted_suffix}.json",
@@ -42,28 +41,4 @@ def generate_instances_file(dataset_dir, output_file, n_instances=20000, n_frame
                 }
             )
 
-    json.dump(instances, open(output_file, "w"), indent=4)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Generate instances.json for the SynthBody dataset."
-    )
-    parser.add_argument(
-        "dataset_dir",
-        type=str,
-        help="Path to the dataset directory (path/to/synth_body/).",
-    )
-    parser.add_argument("output_file", type=str, help="Path to the output JSON file.")
-    parser.add_argument(
-        "--n_instances", type=int, default=20000, help="Number of instances to process."
-    )
-    parser.add_argument(
-        "--n_frames", type=int, default=5, help="Number of frames per instance."
-    )
-
-    args = parser.parse_args()
-
-    generate_instances_file(
-        args.dataset_dir, args.output_file, args.n_instances, args.n_frames
-    )
+    return instances

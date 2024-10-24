@@ -1,39 +1,18 @@
-import os.path as osp
 import cv2
 import numpy as np
-from smpl_numpy import SMPL
 import trimesh
-from pathlib import Path
+from smpl_numpy import SMPL
+import os.path as osp
 import json
-import itertools
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 
 try:
     import trimesh.ray.ray_pyembree
 except ImportError:
     print("Failed to import embree. Make sure to install embreex.")
 
-VISIBILITY_THRESHOLD = 0.3  # 30 cm
-PREVIEW = False
-SYNTH_BODY_DIR = "F:/Documents/These/Datasets/SynthMoCap/data/synth_body"
-OUTPUT_DIR = "F:/Documents/These/Datasets/SynthMoCap/data/synth_body_extras/"
-N_IDENTITIES = 20000
-N_FRAMES_PER_IDENTITY = 5
-MASKS_NAME = [
-    "beard",
-    "eyebrows",
-    "eyelashes",
-    "facewear",
-    "glasses",
-    "hair",
-    "headwear",
-]
-
-coco_joint_regressor = np.load("J_regressor_coco.npy")
-h36m_joint_regressor = np.load("J_regressor_h36m.npy")
-
-SMPLH_MODEL = SMPL("F:/Documents/These/Datasets/SMPL/models/smplh/SMPLH_NEUTRAL.npz")
+_coco_joint_regressor = np.load("J_regressor_coco.npy")
+_h36m_joint_regressor = np.load("J_regressor_h36m.npy")
 
 SMPL_CONNECTIVITY = [
     [1, 0],
@@ -127,53 +106,63 @@ H36M_CONNECTIVITY = [
     [14, 15],
     [15, 16],
     [8, 9],
-    [9, 10]
+    [9, 10],
 ]
 
-def format_output_mask_path(identity, frame):
-    return osp.join(OUTPUT_DIR, f"mask_{identity:07d}_{frame:03d}.png")
+
+def _format_img_path(dataset_dir, identity, frame):
+    return osp.join(dataset_dir, f"img_{identity:07d}_{frame:03d}.jpg")
 
 
-def format_output_extra_metadata_path(identity, frame):
-    return osp.join(OUTPUT_DIR, f"extra_metadata_{identity:07d}_{frame:03d}.json")
+def _format_metadata_path(dataset_dir, identity, frame):
+    return osp.join(dataset_dir, f"metadata_{identity:07d}_{frame:03d}.json")
 
 
-def format_segm_mask_path(identity, frame, mask_name):
-    return osp.join(SYNTH_BODY_DIR, f"segm_{mask_name}_{identity:07d}_{frame:03d}.png")
+def _draw_skeleton_2d(img, joints_2d, joints_vis, connectivity, thickness=1):
+    img_size = (img.shape[1], img.shape[0])
 
-
-def format_img_path(identity, frame):
-    return osp.join(SYNTH_BODY_DIR, f"img_{identity:07d}_{frame:03d}.jpg")
-
-
-def format_metadata_path(identity, frame):
-    return osp.join(SYNTH_BODY_DIR, f"metadata_{identity:07d}_{frame:03d}.json")
-
-
-def combine_masks(identity: int, frame: int):
-    parts_mask = (
-        cv2.imread(
-            format_segm_mask_path(identity, frame, "parts"), cv2.IMREAD_GRAYSCALE
+    connection_pairs = joints_2d[connectivity].astype(int)
+    for p_0, p_1 in connection_pairs:
+        cv2.line(img, tuple(p_0 + 1), tuple(p_1 + 1), (0, 0, 0), thickness, cv2.LINE_AA)
+    for i, (p_0, p_1) in enumerate(connection_pairs):
+        cv2.line(
+            img,
+            tuple(p_0),
+            tuple(p_1),
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
         )
-        > 0
-    )
 
-    final_mask = np.zeros_like(parts_mask, dtype=bool)
-    final_mask[parts_mask] = True
+    for i, joint_2d in enumerate(joints_2d.astype(int)):
+        if np.all(joint_2d > 0) and np.all(joint_2d < img_size):
 
-    for mask_name in MASKS_NAME:
-        mask_path = format_segm_mask_path(identity, frame, mask_name)
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) > 100
-        final_mask[mask] = True
-    return final_mask
+            cv2.putText(
+                img,
+                str(i),
+                (joint_2d[0] + 2, joint_2d[1] - 4),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+            cv2.circle(
+                img, tuple(joint_2d + 1), thickness + 1, (0, 0, 0), -1, cv2.LINE_AA
+            )
+
+            cv2.circle(
+                img,
+                tuple(joint_2d),
+                thickness + 1,
+                (0, 255, 0) if joints_vis[i] else (0, 0, 255),
+                -1,
+                cv2.LINE_AA,
+            )
 
 
-def compute_bbox_from_mask(mask):
-    x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
-    return x, y, w, h
-
-
-def project_joints(joints_3d, world_to_camera, camera_to_image):
+def _project_joints(joints_3d, world_to_camera, camera_to_image):
     joints_homogeneous = np.concatenate(
         [joints_3d, np.ones((joints_3d.shape[0], 1))], axis=1
     )
@@ -195,7 +184,7 @@ def project_joints(joints_3d, world_to_camera, camera_to_image):
     return joints_2d
 
 
-def compute_joints_visibility(
+def _compute_joints_visibility(
     smplh_model: SMPL,
     world_to_camera: np.ndarray,
     joints_3d: np.ndarray,
@@ -282,67 +271,24 @@ def compute_joints_visibility(
     return joints_vis, joints_vis_flags
 
 
-def draw_skeleton_2d(img, joints_2d, joints_vis, connectivity, thickness=1):
-    img_size = (img.shape[1], img.shape[0])
+def generate_joints_annotations(
+    smplh_model: SMPL,
+    dataset_dir: str,
+    identity: int,
+    frame: int,
+    visibility_threshold: float,
+    mask: np.ndarray,
+    preview: bool,
+):
+    metadata_fp = _format_metadata_path(dataset_dir, identity, frame)
+    metadata = json.load(open(metadata_fp))
 
-    connection_pairs = joints_2d[connectivity].astype(int)
-    for p_0, p_1 in connection_pairs:
-        cv2.line(img, tuple(p_0 + 1), tuple(p_1 + 1), (0, 0, 0), thickness, cv2.LINE_AA)
-    for i, (p_0, p_1) in enumerate(connection_pairs):
-        cv2.line(
-            img,
-            tuple(p_0),
-            tuple(p_1),
-            (255, 255, 255),
-            thickness,
-            cv2.LINE_AA,
-        )
-
-    for i, joint_2d in enumerate(joints_2d.astype(int)):
-        if np.all(joint_2d > 0) and np.all(joint_2d < img_size):
-
-            cv2.putText(
-                img,
-                str(i),
-                (joint_2d[0] + 2, joint_2d[1] - 4),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
-
-            cv2.circle(
-                img, tuple(joint_2d + 1), thickness + 1, (0, 0, 0), -1, cv2.LINE_AA
-            )
-
-            cv2.circle(
-                img,
-                tuple(joint_2d),
-                thickness + 1,
-                (0, 255, 0) if joints_vis[i] else (0, 0, 255),
-                -1,
-                cv2.LINE_AA,
-            )
-
-
-def process_identity_frame(smplh_model: SMPL, identity, frame):
-    metadata_fp = format_metadata_path(identity, frame)
-
-    if not Path(metadata_fp).exists():
-        print(f"Missing metadata for identity {identity}, frame {frame}, skipping.")
-        return
-
-    metadata = json.load(open(format_metadata_path(identity, frame)))
     body_identity = np.asarray(metadata["body_identity"])
     pose = np.asarray(metadata["pose"])
     translation = np.asarray(metadata["translation"])
     world_to_camera = np.asarray(metadata["camera"]["world_to_camera"])
     camera_to_image = np.asarray(metadata["camera"]["camera_to_image"])
     resolution = np.asarray(metadata["camera"]["resolution"])
-
-    mask = combine_masks(identity, frame)
-    bbox = compute_bbox_from_mask(mask)  # Bbox in format xywh
 
     smplh_model.beta = body_identity[: smplh_model.shape_dim]
     smplh_model.theta = pose
@@ -351,57 +297,56 @@ def process_identity_frame(smplh_model: SMPL, identity, frame):
     vertices = smplh_model.vertices
 
     smpl_joints_3d = smplh_model.joint_positions
-    smpl_joints_2d = project_joints(smpl_joints_3d, world_to_camera, camera_to_image)
+    smpl_joints_2d = _project_joints(smpl_joints_3d, world_to_camera, camera_to_image)
 
-    coco_joints_3d = coco_joint_regressor.dot(vertices)
-    coco_joints_2d = project_joints(coco_joints_3d, world_to_camera, camera_to_image)
+    coco_joints_3d = _coco_joint_regressor.dot(vertices)
+    coco_joints_2d = _project_joints(coco_joints_3d, world_to_camera, camera_to_image)
 
-    h36m_joints_3d = h36m_joint_regressor.dot(vertices)
-    h36m_joints_2d = project_joints(h36m_joints_3d, world_to_camera, camera_to_image)
+    h36m_joints_3d = _h36m_joint_regressor.dot(vertices)
+    h36m_joints_2d = _project_joints(h36m_joints_3d, world_to_camera, camera_to_image)
 
-    smpl_joints_vis, smpl_joints_vis_flags = compute_joints_visibility(
+    smpl_joints_vis, smpl_joints_vis_flags = _compute_joints_visibility(
         smplh_model,
         world_to_camera,
         smpl_joints_3d,
         smpl_joints_2d,
-        VISIBILITY_THRESHOLD,
+        visibility_threshold,
         mask,
-        show_preview=PREVIEW,
+        show_preview=preview,
         preview_resolution=resolution,
     )
 
-    coco_joints_vis, coco_joints_vis_flags = compute_joints_visibility(
+    coco_joints_vis, coco_joints_vis_flags = _compute_joints_visibility(
         smplh_model,
         world_to_camera,
         coco_joints_3d,
         coco_joints_2d,
-        VISIBILITY_THRESHOLD,
+        visibility_threshold,
         mask,
-        show_preview=PREVIEW,
+        show_preview=preview,
         preview_resolution=resolution,
     )
 
-    h36m_joints_vis, h36m_joints_vis_flags = compute_joints_visibility(
+    h36m_joints_vis, h36m_joints_vis_flags = _compute_joints_visibility(
         smplh_model,
         world_to_camera,
         h36m_joints_3d,
         h36m_joints_2d,
-        VISIBILITY_THRESHOLD,
+        visibility_threshold,
         mask,
-        show_preview=PREVIEW,
+        show_preview=preview,
         preview_resolution=resolution,
     )
 
-
-    if PREVIEW:
-        img = cv2.imread(format_img_path(identity, frame))
+    if preview:
+        img = cv2.imread(_format_img_path(dataset_dir, identity, frame))
 
         smpl_img = img.copy()
         coco_img = img.copy()
         h36m_img = img.copy()
-        draw_skeleton_2d(smpl_img, smpl_joints_2d, smpl_joints_vis, SMPL_CONNECTIVITY)
-        draw_skeleton_2d(coco_img, coco_joints_2d, coco_joints_vis, COCO_CONNECTIVITY)
-        draw_skeleton_2d(h36m_img, h36m_joints_2d, h36m_joints_vis, H36M_CONNECTIVITY)
+        _draw_skeleton_2d(smpl_img, smpl_joints_2d, smpl_joints_vis, SMPL_CONNECTIVITY)
+        _draw_skeleton_2d(coco_img, coco_joints_2d, coco_joints_vis, COCO_CONNECTIVITY)
+        _draw_skeleton_2d(h36m_img, h36m_joints_2d, h36m_joints_vis, H36M_CONNECTIVITY)
 
         plt.subplot(1, 3, 1)
         plt.title(f"SMPL Skeleton - Identity {identity}, frame {frame}")
@@ -420,36 +365,23 @@ def process_identity_frame(smplh_model: SMPL, identity, frame):
 
         plt.show()
 
-    # Output the mask
-    cv2.imwrite(format_output_mask_path(identity, frame), mask.astype(np.uint8) * 255)
-    # Output the extra metadata
-    extra_metadata = {
-        "bbox": bbox,
+    return {
         "smpl": {
-            "joints_2d": smpl_joints_2d.tolist(),
             "joints_3d": smpl_joints_3d.tolist(),
+            "joints_2d": smpl_joints_2d.tolist(),
             "joints_vis": smpl_joints_vis.tolist(),
             "joints_vis_flags": smpl_joints_vis_flags.tolist(),
         },
         "coco": {
-            "joints_2d": coco_joints_2d.tolist(),
             "joints_3d": coco_joints_3d.tolist(),
+            "joints_2d": coco_joints_2d.tolist(),
             "joints_vis": coco_joints_vis.tolist(),
             "joints_vis_flags": coco_joints_vis_flags.tolist(),
         },
         "h36m": {
-            "joints_2d": h36m_joints_2d.tolist(),
             "joints_3d": h36m_joints_3d.tolist(),
+            "joints_2d": h36m_joints_2d.tolist(),
             "joints_vis": h36m_joints_vis.tolist(),
             "joints_vis_flags": h36m_joints_vis_flags.tolist(),
         },
     }
-    with open(format_output_extra_metadata_path(identity, frame), "w") as f:
-        json.dump(extra_metadata, f, indent=4)
-
-
-for identity, frame in tqdm(
-    itertools.product(range(N_IDENTITIES), range(N_FRAMES_PER_IDENTITY)),
-    total=N_IDENTITIES * N_FRAMES_PER_IDENTITY,
-):
-    process_identity_frame(SMPLH_MODEL, identity, frame)
