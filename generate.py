@@ -82,6 +82,9 @@ def generate_instance_extras(identity, frame):
 
 def generate_extras(args):
 
+    if not os.path.exists(args.dataset_dir):
+        raise FileNotFoundError(f"Dataset directory {args.dataset_dir} not found.")
+
     # Ensure the extras folder exists
     os.makedirs(os.path.join(args.dataset_dir, "extras"), exist_ok=True)
 
