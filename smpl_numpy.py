@@ -24,6 +24,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 from pathlib import Path
 
 import numpy as np
+from typing import Union
 
 
 def axis_angle_to_rotation_matrix(axis_angle: np.ndarray) -> np.ndarray:
@@ -49,7 +50,7 @@ def axis_angle_to_rotation_matrix(axis_angle: np.ndarray) -> np.ndarray:
 class SMPL:
     """A NumPy implementation of SMPL."""
 
-    def __init__(self, model_path: str | Path):
+    def __init__(self, model_path: Union[str, Path]):
         """A NumPy implementation of SMPL.
 
         Arguments:
@@ -65,8 +66,8 @@ class SMPL:
         self._vertex_shape_basis = params["shapedirs"]
         self._vertex_pose_basis = params["posedirs"]
 
-        self._joint_parent_idxs = params["kintree_table"][0]
         self._joint_regressor = params["J_regressor"]
+        self._joint_parent_idxs = params["kintree_table"][0]
 
         self._skinning_weights = params["weights"]
 
