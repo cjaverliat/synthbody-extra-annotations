@@ -47,4 +47,5 @@ python generate.py path/to/SynthMoCap/synth_body/ --smplh_model path/to/smplh/mo
 ```
 This will display a 3D scene with the raycast used to generate the visibility flag for each joint and a 2D preview of the SMPL, COCO and H3.6M skeletons. The visible joints are colored in green and the occluded joints are colored in red.
 
+![3D preview of joints raycast on SMPL mesh](img/preview_3d.png)
 ![2D preview of SMPL, COCO and H3.6M skeletons. Visible joints are green. Occluded joints are red.](img/preview_2d.png)
