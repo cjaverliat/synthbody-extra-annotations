@@ -163,4 +163,4 @@ cython_debug/
 
 smplh/
 output/
-.vscode/
+.vscode
