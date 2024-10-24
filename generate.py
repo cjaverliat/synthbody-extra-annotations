@@ -119,7 +119,7 @@ def generate_extras(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Generate instances.json for the SynthBody dataset."
+        description="Generate extra annotations for the SynthBody dataset."
     )
     parser.add_argument(
         "dataset_dir",
@@ -141,12 +141,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--preview_2d",
         action="store_true",
-        help="Show a preview of the visibility computation.",
+        help="Show the SMPL, COCO and H3.6M skeletons along with the visibility.",
     )
     parser.add_argument(
         "--preview_3d",
         action="store_true",
-        help="Show a preview of the visibility computation with 3D raycasts.",
+        help="Show a raycast scene used for computing the joints visibility.",
     )
     parser.add_argument(
         "--smplh_model",
