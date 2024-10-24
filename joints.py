@@ -1,7 +1,8 @@
 import cv2
 import numpy as np
 import trimesh
-from smpl_numpy import SMPL
+from smpl_numpy import SMPL, SMPLOutput
+
 import os.path as osp
 import json
 import matplotlib.pyplot as plt
@@ -11,8 +12,8 @@ try:
 except ImportError:
     print("Failed to import embree. Make sure to install embreex.")
 
-_coco_joint_regressor = np.load("J_regressor_coco.npy")
-_h36m_joint_regressor = np.load("J_regressor_h36m.npy")
+COCO_JOINT_REGRESSOR = np.load("J_regressor_coco.npy")
+H36M_JOINT_REGRESSOR = np.load("J_regressor_h36m.npy")
 
 SMPL_CONNECTIVITY = [
     [1, 0],
@@ -185,13 +186,13 @@ def _project_joints(joints_3d, world_to_camera, camera_to_image):
 
 
 def _compute_joints_visibility(
-    smplh_model: SMPL,
+    smplh_output: SMPLOutput,
     world_to_camera: np.ndarray,
     joints_3d: np.ndarray,
     joints_2d: np.ndarray,
     visibility_threshold: float,
     mask: np.ndarray,
-    show_preview: bool = False,
+    preview_3d: bool = False,
     preview_resolution: tuple[int, int] = (512, 512),
 ):
     # Convert camera to OpenGL convention: pi rotation around x axis
@@ -207,9 +208,9 @@ def _compute_joints_visibility(
     camera_position = world_to_cam_gl[:3, 3]
 
     smpl_mesh = trimesh.Trimesh(
-        vertices=smplh_model.vertices,
-        faces=smplh_model.triangles,
-        face_normals=smplh_model.normals,
+        vertices=smplh_output.vertices,
+        faces=smplh_output.faces,
+        face_normals=smplh_output.normals,
         process=False,
         use_embree=True,
     )
@@ -244,7 +245,7 @@ def _compute_joints_visibility(
     joints_vis_flags[external_occlusion] = 2
     joints_vis_flags[self_occlusion & external_occlusion] = 3
 
-    if show_preview:
+    if preview_3d:
         smpl_mesh.visual.face_colors = [200, 200, 250, 100]
 
         rays = trimesh.load_path(np.hstack((ray_origins, joints_3d)).reshape(-1, 2, 3))
@@ -278,7 +279,8 @@ def generate_joints_annotations(
     frame: int,
     visibility_threshold: float,
     mask: np.ndarray,
-    preview: bool,
+    preview_2d: bool,
+    preview_3d: bool,
 ):
     metadata_fp = _format_metadata_path(dataset_dir, identity, frame)
     metadata = json.load(open(metadata_fp))
@@ -290,55 +292,52 @@ def generate_joints_annotations(
     camera_to_image = np.asarray(metadata["camera"]["camera_to_image"])
     resolution = np.asarray(metadata["camera"]["resolution"])
 
-    smplh_model.beta = body_identity[: smplh_model.shape_dim]
-    smplh_model.theta = pose
-    smplh_model.translation = translation
+    betas = body_identity[: smplh_model.shape_dim]
+    smplh_output = smplh_model.forward(betas, pose, translation)
 
-    vertices = smplh_model.vertices
-
-    smpl_joints_3d = smplh_model.joint_positions
+    smpl_joints_3d = smplh_output.compute_joints_positions(smplh_model.joint_regressor)
     smpl_joints_2d = _project_joints(smpl_joints_3d, world_to_camera, camera_to_image)
 
-    coco_joints_3d = _coco_joint_regressor.dot(vertices)
+    coco_joints_3d = smplh_output.compute_joints_positions(COCO_JOINT_REGRESSOR)
     coco_joints_2d = _project_joints(coco_joints_3d, world_to_camera, camera_to_image)
 
-    h36m_joints_3d = _h36m_joint_regressor.dot(vertices)
+    h36m_joints_3d = smplh_output.compute_joints_positions(H36M_JOINT_REGRESSOR)
     h36m_joints_2d = _project_joints(h36m_joints_3d, world_to_camera, camera_to_image)
 
     smpl_joints_vis, smpl_joints_vis_flags = _compute_joints_visibility(
-        smplh_model,
-        world_to_camera,
-        smpl_joints_3d,
-        smpl_joints_2d,
-        visibility_threshold,
-        mask,
-        show_preview=preview,
+        smplh_output=smplh_output,
+        world_to_camera=world_to_camera,
+        joints_3d=smpl_joints_3d,
+        joints_2d=smpl_joints_2d,
+        visibility_threshold=visibility_threshold,
+        mask=mask,
+        preview_3d=preview_3d,
         preview_resolution=resolution,
     )
 
     coco_joints_vis, coco_joints_vis_flags = _compute_joints_visibility(
-        smplh_model,
-        world_to_camera,
-        coco_joints_3d,
-        coco_joints_2d,
-        visibility_threshold,
-        mask,
-        show_preview=preview,
+        smplh_output=smplh_output,
+        world_to_camera=world_to_camera,
+        joints_3d=coco_joints_3d,
+        joints_2d=coco_joints_2d,
+        visibility_threshold=visibility_threshold,
+        mask=mask,
+        preview_3d=preview_3d,
         preview_resolution=resolution,
     )
 
     h36m_joints_vis, h36m_joints_vis_flags = _compute_joints_visibility(
-        smplh_model,
-        world_to_camera,
-        h36m_joints_3d,
-        h36m_joints_2d,
-        visibility_threshold,
-        mask,
-        show_preview=preview,
+        smplh_output=smplh_output,
+        world_to_camera=world_to_camera,
+        joints_3d=h36m_joints_3d,
+        joints_2d=h36m_joints_2d,
+        visibility_threshold=visibility_threshold,
+        mask=mask,
+        preview_3d=preview_3d,
         preview_resolution=resolution,
     )
 
-    if preview:
+    if preview_2d:
         img = cv2.imread(_format_img_path(dataset_dir, identity, frame))
 
         smpl_img = img.copy()
