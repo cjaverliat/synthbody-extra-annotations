@@ -1,5 +1,7 @@
 # SynthBody Extra Annotations
 
+This repository contains the code to generate extra annotations for the SynthBody dataset. In particular, we generate the 2D and 3D joints positions for the SMPL, COCO and H3.6M skeletons formats along with a visibility flag for each joint.
+
 ## Generate the extra annotations
 
 Generate the extra annotations for the SynthBody dataset.
