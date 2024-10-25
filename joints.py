@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import trimesh
 from smpl_numpy import SMPL, SMPLOutput
+from typing import Literal
 
 import os.path as osp
 import json
@@ -104,8 +105,8 @@ def _compute_joints_visibility(
     visibility_threshold: float,
     mask: np.ndarray,
     preview_3d: bool = False,
-    preview_resolution: tuple[int, int] = (512, 512),
-):
+    preview_resolution: np.ndarray = np.array([512, 512]),
+) -> np.ndarray:
     # Convert camera to OpenGL convention: pi rotation around x axis
     R = np.array(
         [
@@ -150,12 +151,6 @@ def _compute_joints_visibility(
 
     joints_vis = np.logical_not(self_occlusion | external_occlusion)
 
-    # 0 if visible, 1 if self-occluded, 2 if externally occluded, 3 if both
-    joints_vis_flags = np.zeros(len(joints_vis), dtype=np.uint8)
-    joints_vis_flags[self_occlusion] = 1
-    joints_vis_flags[external_occlusion] = 2
-    joints_vis_flags[self_occlusion & external_occlusion] = 3
-
     if preview_3d:
         smpl_mesh.visual.face_colors = [200, 200, 250, 100]
 
@@ -180,118 +175,65 @@ def _compute_joints_visibility(
         scene.camera_transform = world_to_cam_gl
         scene.show(resolution=preview_resolution, line_settings={"point_size": 5})
 
-    return joints_vis, joints_vis_flags
+    return joints_vis
 
 
 def generate_joints_annotations(
     smplh_model: SMPL,
-    dataset_dir: str,
+    skeleton_type: Literal["smpl", "coco", "h36m"],
     identity: int,
     frame: int,
+    segmentation_mask: np.ndarray,
+    body_identity: np.ndarray,
+    body_pose: np.ndarray,
+    body_translation: np.ndarray,
+    camera_w2c: np.ndarray,
+    camera_K: np.ndarray,
+    camera_resolution: np.ndarray,
     visibility_threshold: float,
-    mask: np.ndarray,
-    preview_2d: bool,
-    preview_3d: bool,
+    preview_2d_img: np.ndarray = None,
+    preview_2d: bool = False,
+    preview_3d: bool = False,
 ):
-    metadata_fp = _format_metadata_path(dataset_dir, identity, frame)
-    metadata = json.load(open(metadata_fp))
-
-    body_identity = np.asarray(metadata["body_identity"])
-    pose = np.asarray(metadata["pose"])
-    translation = np.asarray(metadata["translation"])
-    world_to_camera = np.asarray(metadata["camera"]["world_to_camera"])
-    camera_to_image = np.asarray(metadata["camera"]["camera_to_image"])
-    resolution = np.asarray(metadata["camera"]["resolution"])
+    if skeleton_type == "smpl":
+        regressor = smplh_model.joint_regressor
+        connectivity = SMPL_CONNECTIVITY
+    elif skeleton_type == "coco":
+        regressor = COCO_JOINT_REGRESSOR
+        connectivity = COCO_CONNECTIVITY
+    elif skeleton_type == "h36m":
+        regressor = H36M_JOINT_REGRESSOR
+        connectivity = H36M_CONNECTIVITY
+    else:
+        raise ValueError("Invalid skeleton type.")
 
     betas = body_identity[: smplh_model.shape_dim]
-    smplh_output = smplh_model.forward(betas, pose, translation)
+    smplh_output = smplh_model.forward(betas, body_pose, body_translation)
 
-    smpl_joints_3d = smplh_output.compute_joints_positions(smplh_model.joint_regressor)
-    smpl_joints_2d = _project_joints(smpl_joints_3d, world_to_camera, camera_to_image)
+    joints_3d = smplh_output.compute_joints_positions(regressor)
+    joints_2d = _project_joints(joints_3d, camera_w2c, camera_K)
 
-    coco_joints_3d = smplh_output.compute_joints_positions(COCO_JOINT_REGRESSOR)
-    coco_joints_2d = _project_joints(coco_joints_3d, world_to_camera, camera_to_image)
-
-    h36m_joints_3d = smplh_output.compute_joints_positions(H36M_JOINT_REGRESSOR)
-    h36m_joints_2d = _project_joints(h36m_joints_3d, world_to_camera, camera_to_image)
-
-    smpl_joints_vis, smpl_joints_vis_flags = _compute_joints_visibility(
+    joints_vis = _compute_joints_visibility(
         smplh_output=smplh_output,
-        world_to_camera=world_to_camera,
-        joints_3d=smpl_joints_3d,
-        joints_2d=smpl_joints_2d,
+        world_to_camera=camera_w2c,
+        joints_3d=joints_3d,
+        joints_2d=joints_2d,
         visibility_threshold=visibility_threshold,
-        mask=mask,
+        mask=segmentation_mask,
         preview_3d=preview_3d,
-        preview_resolution=resolution,
-    )
-
-    coco_joints_vis, coco_joints_vis_flags = _compute_joints_visibility(
-        smplh_output=smplh_output,
-        world_to_camera=world_to_camera,
-        joints_3d=coco_joints_3d,
-        joints_2d=coco_joints_2d,
-        visibility_threshold=visibility_threshold,
-        mask=mask,
-        preview_3d=preview_3d,
-        preview_resolution=resolution,
-    )
-
-    h36m_joints_vis, h36m_joints_vis_flags = _compute_joints_visibility(
-        smplh_output=smplh_output,
-        world_to_camera=world_to_camera,
-        joints_3d=h36m_joints_3d,
-        joints_2d=h36m_joints_2d,
-        visibility_threshold=visibility_threshold,
-        mask=mask,
-        preview_3d=preview_3d,
-        preview_resolution=resolution,
+        preview_resolution=camera_resolution,
     )
 
     if preview_2d:
-        img = cv2.imread(_format_img_path(dataset_dir, identity, frame))
+        if preview_2d_img is None:
+            raise ValueError("Preview 2D image is required for 2D preview.")
 
-        smpl_img = img.copy()
-        coco_img = img.copy()
-        h36m_img = img.copy()
-        _draw_skeleton_2d(smpl_img, smpl_joints_2d, smpl_joints_vis, SMPL_CONNECTIVITY)
-        _draw_skeleton_2d(coco_img, coco_joints_2d, coco_joints_vis, COCO_CONNECTIVITY)
-        _draw_skeleton_2d(h36m_img, h36m_joints_2d, h36m_joints_vis, H36M_CONNECTIVITY)
+        img = preview_2d_img.copy()
+        _draw_skeleton_2d(img, joints_2d, joints_vis, connectivity)
 
-        plt.subplot(1, 3, 1)
+        plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         plt.title(f"SMPL Skeleton - Identity {identity}, frame {frame}")
         plt.axis("off")
-        plt.imshow(cv2.cvtColor(smpl_img, cv2.COLOR_BGR2RGB))
-
-        plt.subplot(1, 3, 2)
-        plt.title(f"COCO Skeleton - Identity {identity}, frame {frame}")
-        plt.axis("off")
-        plt.imshow(cv2.cvtColor(coco_img, cv2.COLOR_BGR2RGB))
-
-        plt.subplot(1, 3, 3)
-        plt.title(f"H36M Skeleton - Identity {identity}, frame {frame}")
-        plt.axis("off")
-        plt.imshow(cv2.cvtColor(h36m_img, cv2.COLOR_BGR2RGB))
-
         plt.show()
 
-    return {
-        "smpl": {
-            "joints_3d": smpl_joints_3d.tolist(),
-            "joints_2d": smpl_joints_2d.tolist(),
-            "joints_vis": smpl_joints_vis.tolist(),
-            "joints_vis_flags": smpl_joints_vis_flags.tolist(),
-        },
-        "coco": {
-            "joints_3d": coco_joints_3d.tolist(),
-            "joints_2d": coco_joints_2d.tolist(),
-            "joints_vis": coco_joints_vis.tolist(),
-            "joints_vis_flags": coco_joints_vis_flags.tolist(),
-        },
-        "h36m": {
-            "joints_3d": h36m_joints_3d.tolist(),
-            "joints_2d": h36m_joints_2d.tolist(),
-            "joints_vis": h36m_joints_vis.tolist(),
-            "joints_vis_flags": h36m_joints_vis_flags.tolist(),
-        },
-    }
+    return joints_3d, joints_2d, joints_vis

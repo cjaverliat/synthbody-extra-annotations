@@ -25,25 +25,33 @@ pip install -r requirements.txt
 
 4. Generate the extra annotations for the SynthBody dataset using the following command:
 ```sh
-python generate.py path/to/SynthMoCap/synth_body/ --smplh_model path/to/smplh/model_neutral.npz --n_workers 8
+python generate.py path/to/SynthMoCap/synth_body/ --smplh_model path/to/smplh/model_neutral.npz --output_dir ./output/extra_annotations/ --skeleton_type coco --visibility_threshold 0.3 --n_workers 8
 ```
-This will result in the following files:
-
-```
-synth_body/
-├── ...
-├── instances.json
-└── extras/
-    ├── extra_metadata_XXXXXXX_XXX.json
-    ├── ...
-    └── mask_XXXXXXX_XXX.png
+The file 'annotations_<skeleton_type>.npy' will be saved in the output directory.
+The generated annotations are saved in the following format:
+```python
+[
+    {
+        'image': str, # image filename
+        'identity': int,
+        'frame': int,
+        'bbox': np.array([4]), # [x, y, w, h]
+        'skeleton_type': str, # 'coco', 'h36m' or 'smpl'
+        'joints_3d': np.array([n_joints, 3]), # 3D joints positions in the format specified by 'skeleton_type' (eg. coco is 17 joints)
+        'joints_2d': np.array([n_joints, 2]), # 2D joints positions in the format specified by 'skeleton_type' (eg. coco is 17 joints)
+        'joints_vis': np.array([n_joints]), # visibility flag for each joint
+    },
+    {
+        ...
+    }
+]
 ```
 
 ## Preview the generated extra annotations
 
 You can preview the generated extra annotations using the following command:
 ```sh
-python generate.py path/to/SynthMoCap/synth_body/ --smplh_model path/to/smplh/model_neutral.npz --preview_2d --preview_3d
+python generate.py path/to/SynthMoCap/synth_body/ --smplh_model path/to/smplh/model_neutral.npz --skeleton_type coco --visibility_threshold 0.3 --preview_2d --preview_3d
 ```
 This will display a 3D scene with the raycast used to generate the visibility flag for each joint and a 2D preview of the SMPL, COCO and H3.6M skeletons. The visible joints are colored in green and the occluded joints are colored in red.
 

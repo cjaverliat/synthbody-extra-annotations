@@ -1,94 +1,91 @@
 import os
-import cv2
-import numpy as np
 from smpl_numpy import SMPL
 import json
 import itertools
 from tqdm import tqdm
 import argparse
+import numpy as np
+import cv2
 
-from masks import generate_mask, generate_bbox_annotation
+from bbox import generate_mask, generate_bbox_annotation_from_mask
 from joints import generate_joints_annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 
 
-def generate_instance_extras(identity, frame):
+def generate_instance_annotations(args, identity, frame):
+
+    formatted_suffix = f"{identity:07d}_{frame:03d}"
+
     metadata_fp = os.path.join(
         args.dataset_dir,
-        f"metadata_{identity:07d}_{frame:03d}.json",
+        f"metadata_{formatted_suffix}.json",
     )
 
     if not os.path.exists(metadata_fp):
         return None
 
-    formatted_suffix = f"{identity:07d}_{frame:03d}"
+    with open(metadata_fp, "r") as f:
+        metadata = json.load(f)
 
-    mask = generate_mask(args.dataset_dir, identity, frame)
-    bbox_annotation = generate_bbox_annotation(mask)
-    joints_annotations = generate_joints_annotations(
-        args.smplh_model,
-        args.dataset_dir,
-        identity,
-        frame,
-        args.visibility_threshold,
-        mask,
-        args.preview_2d,
-        args.preview_3d,
+    preview_img = None
+
+    if args.preview_2d:
+        preview_img_fp = os.path.join(
+            args.dataset_dir,
+            f"img_{formatted_suffix}.jpg",
+        )
+        preview_img = cv2.imread(preview_img_fp)
+
+    segmentation_mask = generate_mask(args.dataset_dir, identity, frame)
+
+    body_identity = np.array(metadata["body_identity"])
+    body_pose = np.array(metadata["pose"])
+    body_translation = np.array(metadata["translation"])
+    camera_w2c = np.array(metadata["camera"]["world_to_camera"])
+    camera_K = np.array(metadata["camera"]["camera_to_image"])
+    camera_resolution = np.array(metadata["camera"]["resolution"])
+
+    bbox_annotation = generate_bbox_annotation_from_mask(segmentation_mask)
+
+    joints_3d, joints_2d, joints_vis = generate_joints_annotations(
+        smplh_model=args.smplh_model,
+        skeleton_type=args.skeleton_type,
+        identity=identity,
+        frame=frame,
+        segmentation_mask=segmentation_mask,
+        body_identity=body_identity,
+        body_pose=body_pose,
+        body_translation=body_translation,
+        camera_w2c=camera_w2c,
+        camera_K=camera_K,
+        camera_resolution=camera_resolution,
+        visibility_threshold=args.visibility_threshold,
+        preview_2d_img=preview_img,
+        preview_2d=args.preview_2d,
+        preview_3d=args.preview_3d,
     )
 
-    extra_metadata = {
-        "bbox": bbox_annotation,
-        "joints": joints_annotations,
-    }
-
-    cv2.imwrite(
-        os.path.join(args.dataset_dir, "extras", f"mask_{formatted_suffix}.png"),
-        mask.astype(np.uint8) * 255,
-    )
-
-    json.dump(
-        extra_metadata,
-        open(
-            os.path.join(
-                args.dataset_dir,
-                "extras",
-                f"extra_metadata_{formatted_suffix}.json",
-            ),
-            "w",
-        ),
-        indent=4,
-    )
-
-    return {
+    instance_annotations = {
+        "image": f"img_{formatted_suffix}.jpg",
         "identity": identity,
         "frame": frame,
-        "image": f"img_{formatted_suffix}.jpg",
-        "metadata": f"metadata_{formatted_suffix}.json",
-        "extra_metadata": f"extras/extra_metadata_{formatted_suffix}.json",
-        "segm": {
-            "full": f"extras/mask_{formatted_suffix}.png",
-            "beard": f"segm_beard_{formatted_suffix}.png",
-            "eyebrows": f"segm_eyebrows_{formatted_suffix}.png",
-            "eyelashes": f"segm_eyelashes_{formatted_suffix}.png",
-            "facewear": f"segm_facewear_{formatted_suffix}.png",
-            "glasses": f"segm_glasses_{formatted_suffix}.png",
-            "hair": f"segm_hair_{formatted_suffix}.png",
-            "headwear": f"segm_headwear_{formatted_suffix}.png",
-            "parts": f"segm_parts_{formatted_suffix}.png",
-        },
+        "bbox": bbox_annotation,
+        "skeleton_type": args.skeleton_type,
+        "joints_3d": joints_3d,
+        "joints_2d": joints_2d,
+        "joints_vis": joints_vis,
     }
 
+    return instance_annotations
 
-def generate_extras(args):
 
-    if not os.path.exists(args.dataset_dir):
-        raise FileNotFoundError(f"Dataset directory {args.dataset_dir} not found.")
+def generate_annotations(args):
 
-    # Ensure the extras folder exists
-    os.makedirs(os.path.join(args.dataset_dir, "extras"), exist_ok=True)
-
-    instances = []
+    annotations_fp = os.path.join(
+        args.output_dir, f"annotations_{args.skeleton_type}.npy"
+    )
+    annotations = []
 
     if args.n_workers == 0:
         for identity, frame in tqdm(
@@ -97,27 +94,23 @@ def generate_extras(args):
             ),
             total=args.n_identities * args.n_frames_per_identity,
         ):
-            res = generate_instance_extras(identity, frame)
-            if res is not None:
-                instances.append(res)
+            instance_annotations = generate_instance_annotations(args, identity, frame)
+            if instance_annotations is not None:
+                annotations.append(instance_annotations)
     else:
         with ThreadPoolExecutor(max_workers=args.n_workers) as executor:
             futures = [
-                executor.submit(generate_instance_extras, identity, frame)
+                executor.submit(generate_instance_annotations, args, identity, frame)
                 for identity, frame in itertools.product(
                     range(args.n_identities), range(args.n_frames_per_identity)
                 )
             ]
             for future in tqdm(as_completed(futures), total=len(futures)):
-                res = future.result()
-                if res is not None:
-                    instances.append(res)
+                instance_annotations = future.result()
+                if instance_annotations is not None:
+                    annotations.append(instance_annotations)
 
-    json.dump(
-        instances,
-        open(os.path.join(args.dataset_dir, "instances.json"), "w"),
-        indent=4,
-    )
+    np.save(annotations_fp, annotations)
 
 
 if __name__ == "__main__":
@@ -128,6 +121,12 @@ if __name__ == "__main__":
         "dataset_dir",
         type=str,
         help="Path to the dataset directory (path/to/synth_body/).",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="./output/",
+        help="Path to the output directory where the annotations will be saved.",
     )
     parser.add_argument(
         "--n_identities",
@@ -158,6 +157,12 @@ if __name__ == "__main__":
         help="Path to the SMPLH model.",
     )
     parser.add_argument(
+        "--skeleton_type",
+        type=str,
+        default="coco",
+        help="Type of skeleton to use for the joints annotations.",
+    )
+    parser.add_argument(
         "--visibility_threshold",
         type=float,
         default=0.3,
@@ -172,6 +177,14 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if not os.path.exists(args.dataset_dir):
+        raise FileNotFoundError(f"Dataset directory {args.dataset_dir} not found.")
+
+    if args.skeleton_type not in ["smpl", "coco", "h36m"]:
+        raise ValueError(
+            f"Invalid skeleton type {args.skeleton_type}. Must be one of ['smpl', 'coco', 'h36m']."
+        )
+
     if args.n_workers > 0 and (args.preview_2d or args.preview_3d):
         warnings.warn(
             "Disabling previews when using multiple workers. Set n_workers to 0 to enable previews."
@@ -185,4 +198,7 @@ if __name__ == "__main__":
         print(f"  {arg}: {value}")
 
     args.smplh_model = SMPL(args.smplh_model)
-    generate_extras(args)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    generate_annotations(args)

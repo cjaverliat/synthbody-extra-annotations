@@ -36,15 +36,11 @@ def _combine_masks(dataset_dir, identity: int, frame: int):
     return final_mask
 
 
-def _compute_bbox_from_mask(mask):
-    x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
-    return x, y, w, h
-
-
 def generate_mask(dataset_dir, identity, frame):
     mask = _combine_masks(dataset_dir, identity, frame)
     return mask
 
 
-def generate_bbox_annotation(mask: np.ndarray):
-    return _compute_bbox_from_mask(mask)
+def generate_bbox_annotation_from_mask(mask: np.ndarray):
+    x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
+    return x, y, w, h
