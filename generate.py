@@ -6,6 +6,7 @@ from tqdm import tqdm
 import argparse
 import numpy as np
 import cv2
+import pickle
 
 from bbox import generate_mask, generate_bbox_annotation_from_mask
 from joints import generate_joints_annotations
@@ -71,10 +72,12 @@ def generate_instance_annotations(args, identity, frame):
         "identity": identity,
         "frame": frame,
         "bbox": bbox_annotation,
-        "skeleton_type": args.skeleton_type,
         "joints_3d": joints_3d,
         "joints_2d": joints_2d,
         "joints_vis": joints_vis,
+        "camera_w2c": camera_w2c,
+        "camera_K": camera_K,
+        "camera_resolution": camera_resolution,
     }
 
     return instance_annotations
@@ -82,10 +85,7 @@ def generate_instance_annotations(args, identity, frame):
 
 def generate_annotations(args):
 
-    annotations_fp = os.path.join(
-        args.output_dir, f"annotations_{args.skeleton_type}.npy"
-    )
-    annotations = []
+    instances = []
 
     if args.n_workers == 0:
         for identity, frame in tqdm(
@@ -96,7 +96,7 @@ def generate_annotations(args):
         ):
             instance_annotations = generate_instance_annotations(args, identity, frame)
             if instance_annotations is not None:
-                annotations.append(instance_annotations)
+                instances.append(instance_annotations)
     else:
         with ThreadPoolExecutor(max_workers=args.n_workers) as executor:
             futures = [
@@ -108,9 +108,19 @@ def generate_annotations(args):
             for future in tqdm(as_completed(futures), total=len(futures)):
                 instance_annotations = future.result()
                 if instance_annotations is not None:
-                    annotations.append(instance_annotations)
+                    instances.append(instance_annotations)
 
-    np.save(annotations_fp, annotations)
+    annotations_fp = os.path.join(
+        args.output_dir, f"annotations_{args.skeleton_type}.pkl"
+    )
+    annotations = {
+        "skeleton_type": args.skeleton_type,
+        "visibility_threshold": args.visibility_threshold,
+        "instances": instances,
+    }
+
+    with open(annotations_fp, "wb") as f:
+        pickle.dump(annotations, f)
 
 
 if __name__ == "__main__":

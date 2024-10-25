@@ -30,21 +30,27 @@ python generate.py path/to/SynthMoCap/synth_body/ --smplh_model path/to/smplh/mo
 The file 'annotations_<skeleton_type>.npy' will be saved in the output directory.
 The generated annotations are saved in the following format:
 ```python
-[
-    {
-        'image': str, # image filename
-        'identity': int,
-        'frame': int,
-        'bbox': np.array([4]), # [x, y, w, h]
-        'skeleton_type': str, # 'coco', 'h36m' or 'smpl'
-        'joints_3d': np.array([n_joints, 3]), # 3D joints positions in the format specified by 'skeleton_type' (eg. coco is 17 joints)
-        'joints_2d': np.array([n_joints, 2]), # 2D joints positions in the format specified by 'skeleton_type' (eg. coco is 17 joints)
-        'joints_vis': np.array([n_joints]), # visibility flag for each joint
-    },
-    {
-        ...
-    }
-]
+{
+    "skeleton_type": str, # 'coco', 'h36m' or 'smpl',
+    "visibility_threshold": float, # visibility threshold used to generate the visibility flag for each joint
+    "instances": [
+        {
+            'image': str, # image filename
+            'identity': int,
+            'frame': int,
+            'bbox': np.array([4]), # [x, y, w, h]
+            'joints_3d': np.array([n_joints, 3]), # 3D joints positions in the format specified by 'skeleton_type' (eg. coco is 17 joints)
+            'joints_2d': np.array([n_joints, 2]), # 2D joints positions in the format specified by 'skeleton_type' (eg. coco is 17 joints)
+            'joints_vis': np.array([n_joints]), # visibility flag for each joint
+            'camera_w2c': np.array([4, 4]), # camera world to camera matrix
+            'camera_K': np.array([3, 3]), # camera intrinsic matrix
+            'camera_resolution': np.array([2]), # [width, height]
+        },
+        {
+            ...
+        }
+    ]
+}
 ```
 
 ## Preview the generated extra annotations
